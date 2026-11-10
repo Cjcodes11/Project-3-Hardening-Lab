@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bastion Hardening Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script>
+  tailwind.config = {
+    corePlugins: { preflight: true },
+    theme: {
+      extend: {
+        colors: {
+          bg: 'var(--bg)', surface: 'var(--surface)', surface2: 'var(--surface-2)',
+          ink: 'var(--ink)', muted: 'var(--muted)', line: 'var(--line)',
+          accent: 'var(--accent)', good: 'var(--good)', warn: 'var(--warn)', bad: 'var(--bad)'
+        },
+        fontFamily: {
+          display: ['"IBM Plex Sans Condensed"', '"Arial Narrow"', 'system-ui', 'sans-serif'],
+          sans: ['"IBM Plex Sans"', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+          mono: ['"IBM Plex Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']
+        }
+      }
+    }
+  };
+</script>
+<style>
+  /* Layout: ops-console — scoreboard strip on top, findings column + sticky audit terminal, fixed action bar */
+  :root {
+    --bg: #eceff3; --surface: #ffffff; --surface-2: #f4f6f9; --ink: #142029; --muted: #566573; --line: #d2d9e0;
+    --accent: #0a6a86; --accent-ink: #ffffff; --accent-soft: #dcedf2;
+    --good: #1c7547; --good-soft: #def0e5; --warn: #9a5b00; --warn-soft: #f7ead3; --bad: #b42318; --bad-soft: #f8e0dd;
+    --term-bg: #0e1820; --term-fg: #c9dbe4; --term-dim: #6f8696;
+    --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+    --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --f-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1117; --surface: #121b23; --surface-2: #17222c; --ink: #e2e9ef; --muted: #8d9cab; --line: #26333f;
+      --accent: #5cc3dd; --accent-ink: #06222b; --accent-soft: #123441;
+      --good: #4fc58b; --good-soft: #12301f; --warn: #e6a940; --warn-soft: #33260e; --bad: #f2735f; --bad-soft: #3a1714;
+      --term-bg: #070c11; --term-fg: #c9dbe4; --term-dim: #5f7686;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1117; --surface: #121b23; --surface-2: #17222c; --ink: #e2e9ef; --muted: #8d9cab; --line: #26333f;
+    --accent: #5cc3dd; --accent-ink: #06222b; --accent-soft: #123441;
+    --good: #4fc58b; --good-soft: #12301f; --warn: #e6a940; --warn-soft: #33260e; --bad: #f2735f; --bad-soft: #3a1714;
+    --term-bg: #070c11; --term-fg: #c9dbe4; --term-dim: #5f7686;
+    color-scheme: dark;
+  }
+  body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.55; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; letter-spacing: -0.005em; }
+  .eyebrow { font-family: var(--f-mono); font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .meter { position: relative; height: 10px; border-radius: 2px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
+  .meter > i { position: absolute; inset: 0 auto 0 0; width: 0; transition: width .7s cubic-bezier(.2,.8,.2,1); }
+  .meter > b { position: absolute; top: -1px; bottom: -1px; width: 2px; background: var(--ink); opacity: .55; }
+
+  .opt { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: start; padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: pointer; transition: border-color .15s, background .15s; }
+  .opt:hover { border-color: var(--muted); }
+  .opt:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+  .opt:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .opt input { margin-top: 4px; width: 16px; height: 16px; accent-color: var(--accent); }
+  .opt code { font-family: var(--f-mono); font-size: 12px; color: var(--muted); word-break: break-word; }
+
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-mono); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 3px; border: 1px solid currentColor; white-space: nowrap; }
+  .v-secured { color: var(--good); background: var(--good-soft); }
+  .v-costly { color: var(--warn); background: var(--warn-soft); }
+  .v-partial { color: var(--warn); background: var(--warn-soft); }
+  .v-exposed, .v-outage { color: var(--bad); background: var(--bad-soft); }
+  .v-pending { color: var(--muted); background: var(--surface-2); }
+
+  .finding { border: 1px solid var(--line); border-left-width: 4px; border-radius: 6px; background: var(--surface); }
+  .finding[data-v="secured"] { border-left-color: var(--good); }
+  .finding[data-v="costly"], .finding[data-v="partial"] { border-left-color: var(--warn); }
+  .finding[data-v="exposed"], .finding[data-v="outage"] { border-left-color: var(--bad); }
+  .finding[data-v="pending"] { border-left-color: var(--line); }
+
+  .evidence { font-family: var(--f-mono); font-size: 12.5px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; white-space: pre-wrap; word-break: break-word; color: var(--ink); }
+  .result { border-top: 1px dashed var(--line); }
+
+  .term { background: var(--term-bg); color: var(--term-fg); font-family: var(--f-mono); font-size: 12.5px; line-height: 1.6; border-radius: 6px; }
+  .term .dim { color: var(--term-dim); }
+  .term .ok { color: #59d08f; } .term .wn { color: #e9b24b; } .term .er { color: #ff7f6b; } .term .ac { color: #6fd0e8; }
+  .term-body { min-height: 220px; max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+
+  .btn { font-family: var(--f-display); font-weight: 600; letter-spacing: .02em; border-radius: 5px; padding: 10px 18px; transition: transform .08s, filter .15s; }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn-primary { background: var(--accent); color: var(--accent-ink); }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-primary:active { transform: translateY(1px); }
+  .btn-primary[disabled] { opacity: .6; cursor: progress; }
+  .btn-ghost { border: 1px solid var(--line); color: var(--ink); background: var(--surface); }
+  .btn-ghost:hover { border-color: var(--muted); }
+
+  .actionbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--surface); border-top: 1px solid var(--line);
+    padding-top: 12px; padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .stale { font-family: var(--f-mono); font-size: 11px; color: var(--warn); }
+  @media (prefers-reduced-motion: reduce) { .meter > i { transition: none; } * { scroll-behavior: auto !important; } }
+</style>
+
+</head>
+<body>
+<div class="pb-28">
+  <!-- Header -->
+  <header class="border-b border-line bg-surface">
+    <div class="wrap py-5 flex flex-wrap items-end justify-between gap-4">
+      <div class="min-w-0">
+        <p class="eyebrow">Server hardening simulator</p>
+        <h1 class="text-3xl sm:text-4xl font-bold leading-tight mt-1">Bastion Hardening Lab</h1>
+        <p class="text-muted mt-1 max-w-[62ch]">Pick one fix for each finding, then run the audit. Every control has a price: lock things down too hard and the service stops serving anyone.</p>
+      </div>
+      <div class="font-mono text-xs text-muted leading-6 min-w-0">
+        <div><span class="text-ink font-semibold" id="host">prod-web-01</span> · Ubuntu 22.04 LTS</div>
+        <div id="ip">203.0.113.24 · public-facing</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Dashboard -->
+  <section class="wrap pt-6" aria-label="Dashboard">
+    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="bg-surface border border-line rounded-md p-4">
+        <div class="flex items-baseline justify-between"><p class="eyebrow">Security level</p><span class="font-mono text-[11px] text-muted">target 85</span></div>
+        <div class="flex items-baseline gap-2 mt-2"><span id="secVal" class="num font-display text-4xl font-bold">8</span><span class="font-display text-xl text-muted">%</span><span id="secDelta" class="num font-mono text-xs ml-auto"></span></div>
+        <div class="meter mt-3" aria-hidden="true"><i id="secBar" style="background:var(--accent)"></i><b style="left:85%"></b></div>
+      </div>
+      <div class="bg-surface border border-line rounded-md p-4">
+        <div class="flex items-baseline justify-between"><p class="eyebrow">Uptime / usability</p><span class="font-mono text-[11px] text-muted">SLA 95</span></div>
+        <div class="flex items-baseline gap-2 mt-2"><span id="upVal" class="num font-display text-4xl font-bold">100</span><span class="font-display text-xl text-muted">%</span><span id="upDelta" class="num font-mono text-xs ml-auto"></span></div>
+        <div class="meter mt-3" aria-hidden="true"><i id="upBar" style="background:var(--good)"></i><b style="left:95%"></b></div>
+      </div>
+      <div class="bg-surface border border-line rounded-md p-4">
+        <p class="eyebrow">Open findings</p>
+        <div class="flex items-baseline gap-2 mt-2"><span id="openVal" class="num font-display text-4xl font-bold">5</span><span class="font-display text-xl text-muted">/ <span id="totalVal">5</span></span></div>
+        <p id="openNote" class="text-sm text-muted mt-2">Baseline scan. No changes audited yet.</p>
+      </div>
+      <div class="bg-surface border border-line rounded-md p-4">
+        <p class="eyebrow">Posture grade</p>
+        <div class="flex items-baseline gap-3 mt-2"><span id="gradeVal" class="font-display text-4xl font-bold">F</span><span id="postureVal" class="num font-mono text-sm text-muted">score 45</span></div>
+        <p id="gradeNote" class="text-sm text-muted mt-2">60% security, 40% uptime. Uptime under 60 caps you at D.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main -->
+  <main class="wrap pt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px] items-start">
+    <section class="min-w-0" aria-label="Findings">
+      <div class="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+        <h2 class="text-2xl font-semibold">Findings on this host</h2>
+        <button id="newServer" class="btn btn-ghost text-sm" type="button">New server</button>
+      </div>
+      <div id="findings" class="grid gap-4"></div>
+    </section>
+
+    <aside class="min-w-0 lg:sticky lg:top-4 grid gap-4" aria-label="Audit console">
+      <div class="term overflow-hidden">
+        <div class="flex items-center justify-between px-4 py-2 border-b" style="border-color:#1f2d38">
+          <span class="text-[11px] tracking-widest uppercase dim">audit console</span>
+          <span id="runCount" class="text-[11px] dim">run 0</span>
+        </div>
+        <div id="term" class="term-body px-4 py-3" role="log" aria-live="polite"></div>
+      </div>
+      <div class="bg-surface border border-line rounded-md p-4 text-sm">
+        <h3 class="text-lg font-semibold">How the audit scores you</h3>
+        <ul class="mt-2 grid gap-2 text-muted">
+          <li><span class="text-ink font-medium">Security</span> weights each finding by its risk score. A full fix removes all of that risk; a partial one removes some.</li>
+          <li><span class="text-ink font-medium">Uptime</span> starts at 100 and drops with every control that blocks users, admins or deploys.</li>
+          <li><span class="text-ink font-medium">Service broken</span> means the fix removed the risk by removing the service. Auditors pass it; customers don't.</li>
+        </ul>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<div class="actionbar">
+  <div class="max-w-[1240px] mx-auto flex flex-wrap items-center justify-between gap-3">
+    <div class="min-w-0">
+      <p class="font-display font-semibold"><span id="selCount" class="num">0</span> of <span id="selTotal" class="num">5</span> fixes chosen</p>
+      <p id="barNote" class="text-xs text-muted">Unanswered findings count as "no action" in the audit.</p>
+    </div>
+    <div class="flex gap-2">
+      <button id="resetBtn" class="btn btn-ghost text-sm" type="button">Clear choices</button>
+      <button id="auditBtn" class="btn btn-primary" type="button">Run Audit</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ---------- Scenario data ----------
+  // mit = fraction of the finding's risk removed (0..1); cost = uptime/usability points lost.
+  const POOL = [
+    { id: 'ssh', title: 'SSH accepts root login with passwords', service: 'sshd', port: '22/tcp', risk: 9.8, ref: 'CIS Ubuntu 5.2.10 · CWE-250',
+      context: 'Bots try root/password combinations against this port around the clock. One correct guess gives full control of the box.',
+      evidence: '/etc/ssh/sshd_config\n  PermitRootLogin yes\n  PasswordAuthentication yes\nauth.log: 4,212 failed root logins in 24h',
+      options: [
+        { id: 'a', label: 'Move SSH to port 2222', cmd: 'Port 2222', mit: 0.1, cost: 2,
+          why: 'Scanners such as masscan sweep all 65,535 ports in minutes, so the root password is still exposed. This cuts log noise, not risk, and every admin script and firewall rule now needs editing.' },
+        { id: 'b', label: 'Disable root login, require SSH keys, add fail2ban', cmd: 'PermitRootLogin no · PasswordAuthentication no · fail2ban [sshd] maxretry=5', mit: 1, cost: 3,
+          why: 'Attackers lose the one username guaranteed to exist, and key-only auth makes password guessing pointless. Admins log in as named users and escalate with sudo, which leaves an audit trail. The small cost is distributing key pairs before the change.' },
+        { id: 'c', label: 'Set a 24-character random root password', cmd: 'passwd root', mit: 0.35, cost: 0,
+          why: 'A long password beats most brute-force runs, but root is still reachable from the internet and password auth stays open for every other account. A phished or reused password would still hand over root directly.' },
+        { id: 'd', label: 'Block port 22 at the firewall', cmd: 'ufw deny 22/tcp', mit: 1, cost: 38,
+          why: 'Nothing can attack SSH if nothing can reach it, but your team can’t reach it either. Deploys, patching and incident response now go through the hosting provider’s web console. Secure on paper, unmanageable in practice.' }
+      ] },
+    { id: 'apache', title: 'Unpatched Apache with a path-traversal RCE', service: 'apache2', port: '443/tcp', risk: 9.8, ref: 'CVE-2021-41773 · CVE-2021-42013',
+      context: 'Apache 2.4.49 mishandles encoded "../" sequences. With mod_cgi enabled, attackers can read files outside the web root and run commands.',
+      evidence: 'HTTP/1.1 200 OK\nServer: Apache/2.4.49 (Unix)\nmods: cgi_module, alias_module',
+      options: [
+        { id: 'a', label: 'Hide the version banner', cmd: 'ServerTokens Prod · ServerSignature Off', mit: 0.05, cost: 0,
+          why: 'Exploit scanners fire the traversal payload at every Apache server whether or not the banner shows a version. The vulnerable code is still running, so this only hides the evidence.' },
+        { id: 'b', label: 'Add a WAF rule that blocks %2e sequences', cmd: 'SecRule REQUEST_URI "@contains %2e" "deny,status:403"', mit: 0.45, cost: 2,
+          why: 'This stops the original CVE-2021-41773 payload. The follow-up CVE-2021-42013 bypass uses double encoding (%%32%65) and walks straight past it. Filters buy time while you patch; they are not the fix.' },
+        { id: 'c', label: 'Upgrade Apache to the current 2.4.x release', cmd: 'apt update && apt install --only-upgrade apache2 && apachectl graceful', mit: 1, cost: 4,
+          why: 'Patching removes the flawed path normalization, so every encoding variant fails. A graceful reload in a maintenance window keeps downtime to seconds. Check the package changelog, because distros often backport fixes without bumping the version.' },
+        { id: 'd', label: 'Stop Apache until next quarter’s patch cycle', cmd: 'systemctl stop apache2 && systemctl disable apache2', mit: 1, cost: 45,
+          why: 'The exploit can’t hit a server that isn’t running, and neither can your customers. Months of downtime for a fix that takes one package upgrade is a business outage, not hardening.' }
+      ] },
+    { id: 'db', title: 'Database uses default credentials and listens publicly', service: 'postgresql', port: '5432/tcp', risk: 9.1, ref: 'CWE-1392 · CWE-1188',
+      context: 'The postgres superuser still has its installer password and pg_hba.conf accepts it from any address.',
+      evidence: "postgresql.conf  listen_addresses = '*'\npg_hba.conf      host all all 0.0.0.0/0 md5\nlogin test       postgres / postgres → SUCCESS",
+      options: [
+        { id: 'a', label: 'Change the postgres password, leave it public', cmd: "ALTER ROLE postgres PASSWORD '…';", mit: 0.5, cost: 1,
+          why: 'Default credentials are the first thing bots try, so rotating them stops the easy win. The database is still on the open internet, exposed to brute force and to any future pre-auth bug.' },
+        { id: 'b', label: 'Move PostgreSQL to port 15432', cmd: 'port = 15432', mit: 0.1, cost: 3,
+          why: 'Shodan and similar services index databases on any port. postgres/postgres still works for whoever finds it, and the app config now needs changing too.' },
+        { id: 'c', label: 'Rotate creds, add a least-privilege app role, bind to the private network', cmd: "listen_addresses = '10.0.1.5' · CREATE ROLE app_rw LOGIN … · hostssl app app_rw 10.0.1.0/24 scram-sha-256", mit: 1, cost: 3,
+          why: 'The database is unreachable from the internet, the superuser is no longer used by the app, and the app role can only touch its own schema. Even a compromised web app can’t drop other databases or read system catalogs.' },
+        { id: 'd', label: 'Revoke every login until a security review', cmd: 'ALTER ROLE postgres NOLOGIN; ALTER ROLE app NOLOGIN;', mit: 1, cost: 40,
+          why: 'No one can log in with default credentials, including the application. Every page that touches the database now returns a 500 error.' }
+      ] },
+    { id: 'fw', title: 'Host firewall is off and 14 ports are listening', service: 'ufw / netfilter', port: 'all', risk: 8.6, ref: 'CIS Ubuntu 3.5.1 · NIST SP 800-41',
+      context: 'Debug consoles, metrics exporters and internal services are all reachable from the internet because nothing filters inbound traffic.',
+      evidence: '$ ufw status\nStatus: inactive\n$ ss -tlnp | wc -l\n14',
+      options: [
+        { id: 'a', label: 'Install a blocklist of known attacker IPs', cmd: 'ipset create badips hash:ip · iptables -A INPUT -m set --match-set badips src -j DROP', mit: 0.25, cost: 1,
+          why: 'Blocklists trail reality: new botnets, residential proxies and fresh cloud addresses aren’t on them yet. All 14 services stay public to everyone the list hasn’t heard of.' },
+        { id: 'b', label: 'Default-deny inbound; allow 443 publicly and SSH from the admin VPN', cmd: 'ufw default deny incoming · ufw allow 443/tcp · ufw allow from 10.8.0.0/24 to any port 22', mit: 1, cost: 3,
+          why: 'Only the services meant to be public are public. Everything else, from metrics exporters to debug consoles, simply stops answering outsiders. Allowlisting is the core of every firewall baseline.' },
+        { id: 'c', label: 'Leave it open but log every connection', cmd: 'iptables -A INPUT -j LOG --log-prefix "IN: "', mit: 0.05, cost: 1,
+          why: 'Logging tells you about the breach afterward. It blocks nothing, and on a busy host it can fill the disk fast.' },
+        { id: 'd', label: 'Deny all inbound traffic', cmd: 'ufw default deny incoming · ufw enable', mit: 1, cost: 50,
+          why: 'With no allow rules, port 443 closes too and the website disappears. If you run this over SSH, it also cuts your own session.' }
+      ] },
+    { id: 'tls', title: 'TLS 1.0 and weak ciphers still enabled', service: 'apache2 mod_ssl', port: '443/tcp', risk: 7.4, ref: 'PCI DSS 4.0 req. 4.2.1 · CWE-327',
+      context: 'Legacy protocol versions and 3DES/RC4 ciphers let an attacker on the network path weaken or downgrade encrypted sessions.',
+      evidence: 'SSLProtocol all\nSSLCipherSuite ALL:!aNULL  (includes 3DES, RC4)\nStrict-Transport-Security: not set',
+      options: [
+        { id: 'a', label: 'Keep TLS 1.0 for old clients, drop RC4 only', cmd: 'SSLCipherSuite ALL:!aNULL:!RC4', mit: 0.4, cost: 0,
+          why: 'Removing RC4 helps, but TLS 1.0 and 1.1 remain open to downgrade attacks and 3DES still allows Sweet32-style attacks. PCI DSS has prohibited early TLS since 2018, so this fails a compliance scan.' },
+        { id: 'b', label: 'TLS 1.2+ with AEAD ciphers and HSTS', cmd: 'SSLProtocol -all +TLSv1.2 +TLSv1.3 · SSLCipherSuite ECDHE+AESGCM:ECDHE+CHACHA20 · HSTS max-age=31536000', mit: 1, cost: 3,
+          why: 'Forward-secret, authenticated ciphers only, and HSTS stops browsers from ever falling back to plain HTTP. The only clients you lose predate 2014, such as IE 10 and Android 4.3.' },
+        { id: 'c', label: 'TLS 1.3 only', cmd: 'SSLProtocol -all +TLSv1.3', mit: 1, cost: 14,
+          why: 'Cryptographically excellent, but many corporate inspection proxies, payment terminals and older API clients still speak only TLS 1.2. Expect support tickets from real customers.' },
+        { id: 'd', label: 'Replace the certificate with a self-signed one', cmd: 'openssl req -x509 -newkey rsa:4096 -days 365 …', mit: 0.05, cost: 22,
+          why: 'The certificate wasn’t the problem; the protocol settings are unchanged. Now every visitor also gets a full-page browser security warning.' }
+      ] },
+    { id: 'sudo', title: 'Web server user has passwordless sudo to everything', service: 'sudo', port: 'local', risk: 8.8, ref: 'CWE-269 · CIS Ubuntu 5.3',
+      context: 'A deploy shortcut gave www-data full root rights. Any bug that yields code execution in the web app becomes instant root.',
+      evidence: '/etc/sudoers.d/deploy\n  www-data ALL=(ALL) NOPASSWD: ALL',
+      options: [
+        { id: 'a', label: 'Log all sudo usage to a file', cmd: 'Defaults logfile=/var/log/sudo.log', mit: 0.05, cost: 0,
+          why: 'You get a record of the takeover, which an attacker with root can delete. Logging is detection, and here it doesn’t even survive the attack.' },
+        { id: 'b', label: 'Require a password for www-data’s sudo', cmd: 'www-data ALL=(ALL) ALL', mit: 0.35, cost: 6,
+          why: 'Service accounts have no human to type a password, so deploys stop until someone stores it in a file, usually one the web app can read. Root is still one secret away.' },
+        { id: 'c', label: 'Scope sudo to the single command deploys need', cmd: 'www-data ALL=(root) NOPASSWD: /usr/bin/systemctl reload apache2', mit: 1, cost: 2,
+          why: 'Least privilege: a compromised web app can reload Apache and nothing else. Use the full path and no wildcards, since wildcard arguments are a classic sudo escape.' },
+        { id: 'd', label: 'Remove every sudo rule on the box, admins included', cmd: 'rm /etc/sudoers.d/* && deluser admin sudo', mit: 1, cost: 30,
+          why: 'Nobody can escalate, including the people who patch the server. You will be booting into recovery mode the next time anything needs root.' }
+      ] },
+    { id: 'git', title: 'Source repository exposed in the web root', service: 'apache2', port: '443/tcp', risk: 7.5, ref: 'CWE-538 · OWASP WSTG-CONF-04',
+      context: 'The site was deployed with git clone into the public folder, so anyone can download the full history, including old config files.',
+      evidence: 'GET /.git/config        → 200 OK\nGET /.git/logs/HEAD     → 200 OK\ncommit a91f3e: "remove .env (oops)"',
+      options: [
+        { id: 'a', label: 'Add "Disallow: /.git" to robots.txt', cmd: 'echo "Disallow: /.git" >> robots.txt', mit: 0, cost: 0,
+          why: 'robots.txt is public and advisory. Well-behaved crawlers skip the folder, and attackers now have a signpost pointing to it.' },
+        { id: 'b', label: 'Delete .git from the web root', cmd: 'rm -rf /var/www/html/.git', mit: 0.6, cost: 2,
+          why: 'Fixes it today, but the next deploy runs git clone again and the folder comes back. The secrets already in the history were never rotated either.' },
+        { id: 'c', label: 'Deny dotfiles, deploy build artifacts only, rotate leaked secrets', cmd: '<DirectoryMatch "/\\.(?!well-known)"> Require all denied </DirectoryMatch>', mit: 1, cost: 1,
+          why: 'The server refuses hidden paths, the deploy ships only built files, and credentials from the old .env are rotated. Assume anything that was public has already been downloaded.' },
+        { id: 'd', label: 'Put the whole site behind Basic Auth', cmd: 'AuthType Basic · Require valid-user', mit: 1, cost: 40,
+          why: 'The repo is hidden, along with the entire public website. Customers now get a login prompt they have no credentials for.' }
+      ] },
+    { id: 'redis', title: 'Redis cache open to the internet with no auth', service: 'redis-server', port: '6379/tcp', risk: 9.0, ref: 'CWE-306 · Redis security guide',
+      context: 'Unauthenticated Redis is a favorite target for cryptominer botnets, which use CONFIG SET to write SSH keys or cron jobs to disk.',
+      evidence: 'redis.conf\n  bind 0.0.0.0\n  protected-mode no\n  # requirepass (unset)',
+      options: [
+        { id: 'a', label: 'Disable persistence to disk', cmd: 'save ""', mit: 0.05, cost: 4,
+          why: 'Attackers don’t need snapshots. They can still read every cached session token, flush the data, and use CONFIG SET dir/dbfilename to write files.' },
+        { id: 'b', label: 'Bind to localhost, re-enable protected mode, add an ACL user', cmd: 'bind 127.0.0.1 ::1 · protected-mode yes · user app on >… ~cache:* +@read +@write', mit: 1, cost: 2,
+          why: 'Only the local app can connect, and its ACL user can touch cache keys but not admin commands like CONFIG or FLUSHALL. This is the configuration Redis’s own docs recommend.' },
+        { id: 'c', label: 'Set requirepass but keep it public', cmd: 'requirepass …', mit: 0.55, cost: 1,
+          why: 'A single shared password with no rate limiting, sent in plaintext by default. Better than nothing, but brute force and sniffing are both still on the table.' },
+        { id: 'd', label: 'Rename the CONFIG command', cmd: 'rename-command CONFIG ""', mit: 0.3, cost: 3,
+          why: 'This stops the classic file-write trick, but anyone can still read all cached data, flush it, or abuse other commands. Some admin tooling also breaks without CONFIG.' }
+      ] }
+  ];
+  const BY_ID = Object.fromEntries(POOL.map(v => [v.id, v]));
+  const DEFAULT_IDS = ['ssh', 'apache', 'db', 'fw', 'sudo'];
+  const HOSTS = [['prod-web-01', '203.0.113.24'], ['shop-api-02', '198.51.100.17'], ['edge-app-03', '203.0.113.88'], ['cms-prod-04', '198.51.100.140']];
+  const FLOOR = 8; // baseline from controls outside this exercise
+
+  const VERDICTS = {
+    secured: { label: 'Secured', tag: ' OK ', cls: 'ok' },
+    costly:  { label: 'Secured, at a cost', tag: 'WARN', cls: 'wn' },
+    partial: { label: 'Partial fix', tag: 'WARN', cls: 'wn' },
+    exposed: { label: 'Still exposed', tag: 'FAIL', cls: 'er' },
+    outage:  { label: 'Service broken', tag: 'DOWN', cls: 'er' },
+    pending: { label: 'Not audited', tag: '----', cls: 'dim' }
+  };
+
+  // ---------- State ----------
+  let state = { ids: DEFAULT_IDS.slice(), host: 0, sel: {}, audit: null, prevAudit: null, auditedSel: null, runs: 0 };
+  const hot = window.claude && window.claude.hot;
+
+  function verdictFor(opt) {
+    if (!opt) return 'exposed';
+    if (opt.cost >= 25) return 'outage';
+    if (opt.mit >= 0.9) return opt.cost >= 10 ? 'costly' : 'secured';
+    if (opt.mit >= 0.45) return 'partial';
+    return 'exposed';
+  }
+  function bestOption(v) {
+    return v.options.filter(o => verdictFor(o) === 'secured').sort((a, b) => a.cost - b.cost)[0];
+  }
+  function compute(sel) {
+    const vulns = state.ids.map(id => BY_ID[id]);
+    const totalRisk = vulns.reduce((s, v) => s + v.risk, 0);
+    let removed = 0, cost = 0, open = 0;
+    const rows = vulns.map(v => {
+      const opt = v.options.find(o => o.id === sel[v.id]) || null;
+      const mit = opt ? opt.mit : 0, c = opt ? opt.cost : 0;
+      removed += v.risk * mit; cost += c;
+      const verdict = verdictFor(opt);
+      if (verdict === 'exposed' || verdict === 'partial') open++;
+      return { v, opt, verdict, secPts: Math.round((100 - FLOOR) * v.risk * mit / totalRisk), cost: c };
+    });
+    const security = Math.round(FLOOR + (100 - FLOOR) * removed / totalRisk);
+    const uptime = Math.max(0, 100 - cost);
+    const posture = Math.round(security * 0.6 + uptime * 0.4);
+    let grade = posture >= 90 ? 'A' : posture >= 80 ? 'B' : posture >= 70 ? 'C' : posture >= 60 ? 'D' : 'F';
+    if (uptime < 60 && 'ABC'.includes(grade)) grade = 'D';
+    return { rows, security, uptime, posture, grade, open };
+  }
+
+  // ---------- Rendering ----------
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function renderFindings() {
+    const res = state.audit;
+    $('findings').innerHTML = state.ids.map((id, i) => {
+      const v = BY_ID[id];
+      const row = res && res.rows.find(r => r.v.id === id);
+      const changed = res && state.auditedSel && (state.auditedSel[id] || null) !== (state.sel[id] || null);
+      const vkey = row ? row.verdict : 'pending';
+      const best = bestOption(v);
+      const opts = v.options.map(o => `
+        <label class="opt" for="opt-${v.id}-${o.id}">
+          <input type="radio" name="v-${v.id}" id="opt-${v.id}-${o.id}" value="${o.id}" ${state.sel[v.id] === o.id ? 'checked' : ''}>
+          <span class="min-w-0"><span class="block font-medium">${esc(o.label)}</span><code class="block mt-1">${esc(o.cmd)}</code></span>
+        </label>`).join('');
+      let result = '';
+      if (row) {
+        const V = VERDICTS[row.verdict];
+        const what = row.opt ? esc(row.opt.why) : 'No change was applied, so the full risk remains. In a real audit this finding stays open and is escalated with its severity.';
+        const rec = (row.verdict !== 'secured' && best) ? `<p class="text-sm mt-2"><span class="eyebrow mr-2">Recommended</span>${esc(best.label)}</p>` : '';
+        result = `
+          <div class="result px-4 sm:px-5 py-4">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span class="chip v-${row.verdict}">${V.label}</span>
+              <span class="num font-mono text-xs text-muted">security +${row.secPts} · uptime −${row.cost}</span>
+              ${changed ? '<span class="stale">changed since last audit</span>' : ''}
+            </div>
+            <p class="mt-2 max-w-[68ch]">${what}</p>
+            ${rec}
+          </div>`;
+      }
+      return `
+        <article class="finding" data-v="${vkey}">
+          <div class="px-4 sm:px-5 pt-4 pb-4">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div class="min-w-0">
+                <p class="eyebrow">Finding ${i + 1} · ${esc(v.service)} · ${esc(v.port)}</p>
+                <h3 class="text-xl font-semibold leading-snug mt-1">${esc(v.title)}</h3>
+              </div>
+              <span class="chip ${v.risk >= 9 ? 'v-exposed' : 'v-partial'}" title="Risk score used to weight this finding">risk ${v.risk.toFixed(1)}</span>
+            </div>
+            <p class="text-muted mt-2 max-w-[68ch]">${esc(v.context)}</p>
+            <div class="grid gap-3 mt-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+              <pre class="evidence min-w-0">${esc(v.evidence)}</pre>
+              <p class="font-mono text-[11px] text-muted md:max-w-[16ch]">${esc(v.ref)}</p>
+            </div>
+            <fieldset class="mt-4">
+              <legend class="eyebrow mb-2">Choose a hardening action</legend>
+              <div class="grid gap-2">${opts}</div>
+            </fieldset>
+          </div>
+          ${result}
+        </article>`;
+    }).join('');
+  }
+
+  function fmtDelta(cur, prev) {
+    if (prev == null || cur === prev) return '';
+    const d = cur - prev;
+    return `<span style="color:var(${d > 0 ? '--good' : '--bad'})">${d > 0 ? '+' : '−'}${Math.abs(d)} vs last</span>`;
+  }
+
+  function renderDashboard() {
+    const r = state.audit || compute({});
+    const p = state.prevAudit;
+    $('secVal').textContent = r.security;
+    $('upVal').textContent = r.uptime;
+    $('secBar').style.width = r.security + '%';
+    $('upBar').style.width = r.uptime + '%';
+    $('upBar').style.background = r.uptime >= 95 ? 'var(--good)' : r.uptime >= 60 ? 'var(--warn)' : 'var(--bad)';
+    $('secDelta').innerHTML = state.audit ? fmtDelta(r.security, p && p.security) : '';
+    $('upDelta').innerHTML = state.audit ? fmtDelta(r.uptime, p && p.uptime) : '';
+    $('openVal').textContent = r.rows.filter(x => x.verdict === 'exposed' || x.verdict === 'partial').length;
+    $('totalVal').textContent = state.ids.length;
+    const broken = r.rows.filter(x => x.verdict === 'outage').length;
+    $('openNote').textContent = !state.audit ? 'Baseline scan. No changes audited yet.'
+      : broken ? `${broken} fix${broken > 1 ? 'es' : ''} took a service down.` : 'Exposed and partial fixes count as open.';
+    $('gradeVal').textContent = r.grade;
+    $('gradeVal').style.color = 'var(' + (r.grade === 'A' || r.grade === 'B' ? '--good' : r.grade === 'C' ? '--warn' : '--bad') + ')';
+    $('postureVal').textContent = 'score ' + r.posture;
+    $('gradeNote').textContent = !state.audit ? '60% security, 40% uptime. Uptime under 60 caps you at D.'
+      : r.grade === 'A' ? 'Hardened and still serving traffic. Ship it.'
+      : r.uptime < 60 ? 'Locked down, but the business can’t run on it.'
+      : r.security < 85 ? 'Below the security target. Revisit the open findings.'
+      : 'Close. Look for fixes with a lower uptime cost.';
+    $('runCount').textContent = 'run ' + state.runs;
+    const [host, ip] = HOSTS[state.host];
+    $('host').textContent = host; $('ip').textContent = ip + ' · public-facing';
+  }
+
+  function renderBar() {
+    const n = state.ids.filter(id => state.sel[id]).length;
+    $('selCount').textContent = n; $('selTotal').textContent = state.ids.length;
+    const changed = state.audit && state.ids.some(id => (state.auditedSel[id] || null) !== (state.sel[id] || null));
+    $('barNote').textContent = changed ? 'You changed fixes since the last audit. Run it again to update the score.'
+      : n < state.ids.length ? 'Unanswered findings count as “no action” in the audit.' : 'All findings have a fix selected.';
+  }
+
+  function termIdle() {
+    const [host, ip] = HOSTS[state.host];
+    $('term').innerHTML = `<span class="dim">$</span> ssh auditor@${esc(ip)}\n<span class="dim">Connected to ${esc(host)} (Ubuntu 22.04.4 LTS)</span>\n<span class="dim">$</span> bastion-audit --baseline\n<span class="wn">[WARN]</span> ${state.ids.length} findings require action\n<span class="dim">Choose a fix for each finding, then press Run Audit.</span>\n<span class="ac">█</span>`;
+  }
+
+  function renderAll() { renderFindings(); renderDashboard(); renderBar(); }
+
+  // ---------- Audit ----------
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let running = false;
+  function runAudit() {
+    if (running) return;
+    running = true;
+    const btn = $('auditBtn'); btn.disabled = true; btn.textContent = 'Auditing…';
+    const result = compute(state.sel);
+    const [host] = HOSTS[state.host];
+    const lines = [
+      `<span class="dim">$</span> sudo bastion-audit --host ${esc(host)} --profile cis-l1`,
+      `<span class="dim">Applying ${state.ids.filter(id => state.sel[id]).length} change(s), restarting affected services…</span>`,
+      ...result.rows.map(r => {
+        const V = VERDICTS[r.verdict];
+        return `<span class="${V.cls}">[${V.tag}]</span> ${esc(r.v.service)} ${esc(r.v.port)}  ${esc(V.label.toLowerCase())}`;
+      }),
+      `<span class="dim">────────────────────</span>`,
+      `security <span class="ac">${result.security}%</span>   uptime <span class="${result.uptime >= 95 ? 'ok' : result.uptime >= 60 ? 'wn' : 'er'}">${result.uptime}%</span>   grade <span class="ac">${result.grade}</span>`,
+      `<span class="ac">█</span>`
+    ];
+    const term = $('term');
+    term.innerHTML = '';
+    const finish = () => {
+      state.prevAudit = state.audit;
+      state.audit = result;
+      state.auditedSel = Object.assign({}, state.sel);
+      state.runs++;
+      renderAll();
+      btn.disabled = false; btn.textContent = 'Run Audit';
+      running = false;
+    };
+    if (reduced) { term.innerHTML = lines.join('\n'); finish(); return; }
+    let i = 0;
+    const step = () => {
+      term.innerHTML += (i ? '\n' : '') + lines[i];
+      term.scrollTop = term.scrollHeight;
+      i++;
+      if (i < lines.length) setTimeout(step, i < 2 ? 320 : 170); else finish();
+    };
+    step();
+  }
+
+  function newServer() {
+    const pool = POOL.map(v => v.id).sort(() => Math.random() - 0.5);
+    state = { ids: pool.slice(0, 5), host: (state.host + 1) % HOSTS.length, sel: {}, audit: null, prevAudit: null, auditedSel: null, runs: 0 };
+    renderAll(); termIdle();
+  }
+
+  // ---------- Events ----------
+  $('findings').addEventListener('change', e => {
+    const t = e.target;
+    if (t.type !== 'radio') return;
+    state.sel[t.name.slice(2)] = t.value;
+    renderBar();
+    if (state.audit) renderFindings(); // refresh "changed since last audit" markers
+  });
+  $('auditBtn').addEventListener('click', runAudit);
+  $('resetBtn').addEventListener('click', () => { state.sel = {}; renderFindings(); renderBar(); });
+  $('newServer').addEventListener('click', newServer);
+
+  function start(data) {
+    if (data && data.state && Array.isArray(data.state.ids)) state = data.state;
+    renderAll();
+    if (state.audit) {
+      $('term').innerHTML = `<span class="dim">Restored session · last audit: grade ${state.audit.grade}</span>\n<span class="ac">█</span>`;
+    } else termIdle();
+  }
+  if (hot && hot.snapshot) hot.snapshot(() => ({ state }));
+  if (hot && hot.ready) hot.ready(start); else start(hot && hot.data ? hot.data : {});
+})();
+</script>
+</body>
+</html>
